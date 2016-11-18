@@ -1,0 +1,162 @@
+<html>
+  <head>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="http://d3js.org/d3.v3.min.js"></script>
+    <script src="http://maurizzzio.github.io/function-plot/js/function-plot.js"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
+    <style>
+      .inline { display: inline-block; position: relative; vertical-align: top; }
+      .inline > span { position: absolute; left: 40px; top: 30px; }
+      button { display: block; }
+    </style>
+  </head>
+  <body>
+    <div class="inline">
+      Maximization: <select id="maxFn" onchange="reset()"></select>
+      <button onclick="reset()">Reset</button>
+      <button onclick="iterate()">Single Iteration</button>
+      <button onclick="play()">Play</button>
+      <div id="log"></div>
+    </div>
+    <script>
+      const KLASSEN = [1, 2, 3, 4, 5, 6],
+            MAX_FUNCTIONS = {
+              '1/EuklidDist': (group, x) => 1/math.sqrt(x.reduce((sum, _, i) => sum + ((x[i] - group.mean[i])*(x[i] - group.mean[i])), 0)),
+              '1/MahalanobisDist': (group, x) => {
+                let xNormiert = math.subtract(x, group.mean);
+                return 1/math.multiply(math.multiply(math.transpose(xNormiert), group.invCovariance), xNormiert)
+              },
+              'p(x)': (group, x) => {
+                let xNormiert = math.subtract(x, group.mean),
+                    mahalanobis = math.multiply(math.multiply(math.transpose(xNormiert), group.invCovariance), xNormiert);
+                return (1/math.sqrt(math.det(math.multiply(2*math.pi, group.covariance)))) * math.pow(math.e, -mahalanobis/2);
+              },
+            },
+            FINISH_ACCURACY = Math.pow(10, -7);
+      KLASSEN.forEach(k => document.body.insertAdjacentHTML('beforeend', `<div class="inline" id="em${k}"><span>EM ${k}</span></div>`));
+      Object.keys(MAX_FUNCTIONS).forEach((maxFn, i) => document.getElementById('maxFn').insertAdjacentHTML('beforeend', `<option value="${maxFn}" ${i==0?'selected':''}>${maxFn}</option>`));
+      let csv,
+          ems;
+
+      jQuery.get('2d-em.csv', (data) => {
+        csv = readCsv(data, 2);
+        init();
+      });
+
+      function init() {
+        log(`#Points: ${csv.length}`);
+        reset();
+      }
+
+      function reset() {
+        ems = KLASSEN.map(k => new EM(k, MAX_FUNCTIONS[document.getElementById('maxFn').value]));
+      }
+
+      function play(i) {
+        i = i | 0;
+        if(i < 100 && ems.filter(em => !em.finished).length > 0) {
+          iterate();
+          setTimeout(() => play(i-1), 500);
+        }
+      }
+
+      function iterate() {
+        ems.filter(em => !em.finished).forEach(em => {
+          em.expectation();
+          em.maximization();
+          em.paint();
+        });
+      }
+
+      class EM {
+        constructor(k, maximizationFn) {
+          this.k = k;
+          this.maximizationFn = maximizationFn;
+          this.finished = false;
+          this.oldDet = Number.MAX_VALUE;
+          this.groups = new Array(k).fill(0).map(() => {
+            return {
+              points: [],
+              mean: csv[~~(math.random() * csv.length)],
+              covariance: math.eye(csv[0].length),
+              invCovariance: math.eye(csv[0].length)
+            }
+          });
+          this.expectation();
+          this.maximization();
+          this.paint();
+        }
+
+        paint() {
+          plot(`em${this.k}`, this.groups, this.finished);
+        }
+
+        expectation() {
+          this.groups.forEach(group => Object.assign(group, {points: []}));
+          csv.forEach(p => {
+            let ps = this.groups.map(group => {
+              return {group: group, val: this.maximizationFn(group, p)}
+            });
+            let pMax = ps.reduce((res, p) => !res ? p : (res.val > p.val ? res : p));
+            pMax.group.points.push(p);
+          });
+        }
+
+        maximization() {
+          this.groups.forEach(group => Object.assign(group, this.groupMaximization(group.points)));
+          let newDet = Math.max(...this.groups.map(group => math.det(group.covariance)));
+          if(Math.abs(this.oldDet - newDet) < FINISH_ACCURACY) {
+            this.finished = true;
+          }
+          this.oldDet = newDet;
+        }
+
+        groupMaximization(points) {
+          if(points.length == 0) return;
+          let mean = math.mean(points, 0),
+              meanMatrix = mean.map(m => [m]),
+              covariance = math.multiply(1 / (points.length - 1),
+                      math.subtract(
+                              math.multiply(math.transpose(points), points),
+                              math.multiply(points.length, math.multiply(meanMatrix, math.transpose(meanMatrix)))));
+          covariance = math.add( covariance, math.diag(points[0].map(() => 0.00001)));
+          return {
+            mean: mean,
+            covariance: covariance,
+            invCovariance: math.inv(covariance)
+          }
+        }
+      }
+      //helpers
+      function readCsv(data, k, split) {
+        return data.split('\n').map(line => line.split(split ? split : ',').map(x => Number.parseFloat(x))).filter(arr => arr.length >= k)
+      }
+      function log(x) {
+        document.getElementById('log').innerText += x + '\n';
+      }
+      function plot(target, groups, finish) {
+        functionPlot({
+          target: `#${target}`,
+          xAxis: {domain: [-15, 15]},
+          data: groups.map(group => { return {
+              points: group.points,
+              fnType: 'points',
+              graphType: 'scatter'
+            }}).concat(groups.filter(group => !Number.isNaN(group.covariance[0][0]) && !Number.isNaN(group.covariance[0][1]) &&!Number.isNaN(group.covariance[1][0]) && !Number.isNaN(group.covariance[1][1]))
+                             .map(group => { return {
+              x: `(${group.covariance[0][0]})*cos(t)+(${group.covariance[0][1]})*sin(t)+${group.mean[0]}`,
+              y: `(${group.covariance[1][0]})*cos(t)+(${group.covariance[1][1]})*sin(t)+${group.mean[1]}`,
+              fnType: 'parametric',
+              graphType: 'polyline',
+              color: 'black'
+            }}))
+        });
+        if(finish) {
+          document.getElementById(target).style.border = '2px solid green';
+        }else{
+          document.getElementById(target).style.border = '';
+        }
+      }
+    </script>
+  </body>
+</html>
