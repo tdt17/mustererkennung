@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://d3js.org/d3.v3.min.js"></script>
+    <script src="https://maurizzzio.github.io/function-plot/js/function-plot.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
+</head>
+<body>
+<div id="graph"></div>
+
+<script>
+  class Perzeptron {
+    constructor(k) {
+      this.b = new Array(k+1).fill(0);
+    }
+
+    train(train) {
+      let x = [1].concat(train.slice()),
+        y = x.pop();
+      this.b = math.add(this.b, math.multiply(x, math.subtract(y, this.predict(x.slice(1)))));
+    }
+
+    predict(test) {
+      let x = [1].concat(test.slice()),
+        exp = math.pow(math.e, math.sum(math.multiply(x, this.b)));
+      return exp/(1 + exp);
+    }
+  }
+
+    let LOGIC_TRAIN = {
+      AND: [[0, 0, 0],
+            [0, 1, 0],
+            [1, 0, 0],
+            [1, 1, 1]],
+      OR:  [[0, 0, 0],
+            [0, 1, 1],
+            [1, 0, 1],
+            [1, 1, 1]],
+      XOR: [[0, 0, 0],
+            [0, 1, 1],
+            [1, 0, 1],
+            [1, 1, 0]]
+    };
+    let GRAPH = Object.keys(LOGIC_TRAIN).reduce((obj, key) => Object.assign(obj, {[key]: []}), {});
+    let perzeptrons = Object.keys(LOGIC_TRAIN).reduce((obj, key) => Object.assign(obj, {[key]: new Perzeptron(2)}), {});
+
+    function next() {
+      Object.keys(LOGIC_TRAIN).forEach(key => {
+        perzeptrons[key].train(LOGIC_TRAIN[key][~~(Math.random()*LOGIC_TRAIN[key].length)]);
+      });
+      test();
+    }
+
+    setInterval(next, 100);
+
+    function test() {
+      Object.keys(LOGIC_TRAIN).forEach(key => {
+        let error = LOGIC_TRAIN[key].reduce((sum, row) => sum + math.abs(row[2] - perzeptrons[key].predict(row.slice(0,2))), 0);
+        GRAPH[key].push([GRAPH[key].length, error]);
+        console.log(key, error);
+      });
+      functionPlot({
+        target: '#graph',
+        width: 1200,
+        height: 500,
+        disableZoom: true,
+        xAxis: {
+          label: 'x - Iterationen',
+          domain: [0, GRAPH['AND'].length+1]
+        },
+        yAxis: {
+          label: 'y - Error',
+          domain: [0,4]
+        },
+        data: Object.keys(LOGIC_TRAIN).map(key => { return {
+          points: GRAPH[key],
+          title: key,
+          fnType: 'points',
+          graphType: 'polyline'
+        }})
+      })
+    }
+</script>
+</body>
+</html>
