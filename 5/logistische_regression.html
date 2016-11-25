@@ -8,6 +8,7 @@
 </head>
 <body>
 <div id="graph"></div>
+<div id="graphAbsoluteEror"></div>
 
 <script>
   class Perzeptron {
@@ -43,7 +44,8 @@
             [1, 1, 0]]
     };
     let GRAPH = Object.keys(LOGIC_TRAIN).reduce((obj, key) => Object.assign(obj, {[key]: []}), {});
-    let perzeptrons = Object.keys(LOGIC_TRAIN).reduce((obj, key) => Object.assign(obj, {[key]: new Perzeptron(2)}), {});
+	let GRAPH_ABSOLUTE_E = Object.keys(LOGIC_TRAIN).reduce((obj, key) => Object.assign(obj, {[key]: []}), {});
+    let perzeptrons = Object.keys(LOGIC_TRAIN).reduce((obj, key) => Object.assign(obj, {[key]: new Perzeptron(LOGIC_TRAIN[key][0].length-1)}), {});
 
     function next() {
       Object.keys(LOGIC_TRAIN).forEach(key => {
@@ -56,31 +58,37 @@
 
     function test() {
       Object.keys(LOGIC_TRAIN).forEach(key => {
-        let error = LOGIC_TRAIN[key].reduce((sum, row) => sum + math.abs(row[2] - perzeptrons[key].predict(row.slice(0,2))), 0);
+        let error = LOGIC_TRAIN[key].reduce((sum, row) => sum + 0.5*math.pow(row[row.length-1] - perzeptrons[key].predict(row.slice(0,row.length-1)), 2), 0),
+			error_absolute = LOGIC_TRAIN[key].reduce((sum, row) => sum + math.abs(row[row.length-1] - perzeptrons[key].predict(row.slice(0,row.length-1))), 0);
         GRAPH[key].push([GRAPH[key].length, error]);
-        console.log(key, error);
+        GRAPH_ABSOLUTE_E[key].push([GRAPH_ABSOLUTE_E[key].length, error_absolute]);
+		console.log(key, error);
       });
-      functionPlot({
-        target: '#graph',
+	  plot('graph', [0,1], 'Quadratischer Error', GRAPH);
+	  plot('graphAbsoluteEror', [0,4], 'Absoluter Error', GRAPH_ABSOLUTE_E);
+    }
+	function plot(target, yDim, yLabel, graph) {
+	  functionPlot({
+        target: `#${target}`,
         width: 1200,
         height: 500,
         disableZoom: true,
         xAxis: {
           label: 'x - Iterationen',
-          domain: [0, GRAPH['AND'].length+1]
+          domain: [0, graph['AND'].length+1]
         },
         yAxis: {
-          label: 'y - Error',
-          domain: [0,4]
+          label: `y - ${yLabel}`,
+          domain: yDim
         },
         data: Object.keys(LOGIC_TRAIN).map(key => { return {
-          points: GRAPH[key],
+          points: graph[key],
           title: key,
           fnType: 'points',
           graphType: 'polyline'
         }})
       })
-    }
+	}
 </script>
 </body>
 </html>

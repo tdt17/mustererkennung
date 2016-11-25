@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://d3js.org/d3.v3.min.js"></script>
+    <script src="https://maurizzzio.github.io/function-plot/js/function-plot.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
+    <style>
+        .inline { display: inline-block; position: relative; vertical-align: top; }
+        .inline > span { position: absolute; left: 40px; top: 30px; }
+        .left { float: left }
+    </style>
+</head>
+<body>
+<div id="log" class="left"></div>
+<div class="inline" id="graph0"><span>3 vs 5</span></div>
+<div class="inline" id="graph1"><span>3 vs 7</span></div>
+<div class="inline" id="graph2"><span>3 vs 8</span></div>
+<div class="inline" id="graph3"><span>5 vs 7</span></div>
+<div class="inline" id="graph4"><span>5 vs 8</span></div>
+<div class="inline" id="graph5"><span>7 vs 8</span></div>
+<script>
+    log('Ausgabe:');
+    let classes = [3, 5, 7, 8];
+    let training = [];
+    let gets = classes.map(x => jQuery.get(`train.${x}`));
+
+    log('Start');
+    jQuery.when( ...gets ).done((...responses) => {
+      training = responses.map((response, i) => {
+        let csv = readCsv(response[0], 256),
+          mean = math.mean(csv, 0),
+          meanMatrix = mean.map(m => [m]),
+          covariance = math.add( math.multiply(1 / (csv.length - 1),
+                                    math.subtract(
+                                        math.multiply(math.transpose(csv), csv),
+                                        math.multiply(csv.length, math.multiply(meanMatrix, math.transpose(meanMatrix))))),
+                                math.diag(csv[0].map(() => 0.00001)));
+        return {
+          id: classes[i],
+          csv: csv,
+          matrix: math.matrix(csv),
+          covariance: covariance,
+          mean: math.matrix(mean)
+        }
+      });
+      console.log(training);
+
+      let a = b = 0,
+          trainingsSets = [];
+      for (a = 0; a < training.length; a++) {
+        for (b = a + 1; b < training.length; b++) {
+          trainingsSets.push([training[a], training[b]]);
+        }
+      }
+
+      let trainingBinaryFisher = trainingsSets.map((trainings, i) => {
+        console.log(`calc for (${trainings[0].id}, ${trainings[1].id})`);
+        let u = getFischerU(trainings[0], trainings[1]);
+        u = normieren(u);
+        let tOnU = trainings.map(training => {
+          let values = math.multiply(training.matrix, u),
+              mean = math.mean(values);
+          return {
+            values: values,
+            mean: mean,
+            var: math.mean(math.dotPow(math.subtract(values, mean), 2))
+          }
+        });
+        let p = (x, tOnU) => math.eval('(1/sqrt(2*pi*var)) * exp(-(x-mean)^2/(2*var))', Object.assign({}, tOnU, {x: math.multiply(u,x)}));
+        console.log(tOnU[0], tOnU[1]);
+        plot(`graph${i}`, tOnU);
+        return {
+          trainings: trainings,
+          testFn: (test) => p(test, tOnU[0]) > p(test, tOnU[1])? trainings[0].id: trainings[1].id,
+          p: (test, i) => p(test, tOnU[i])
+        }
+      });
+
+      log('Berechne Klassifikationsgüten...');
+      jQuery.get('zip.test', (data) => {
+        let testing = readCsv(data, 257, ' ').map(row => {
+          return {
+            id: row[0],
+            csv: row.slice(1)
+          }
+        });
+
+        trainingBinaryFisher.forEach(fisher => {
+          let testData = testing.filter(test => test.id == fisher.trainings[0].id || test.id == fisher.trainings[1].id),
+            correct = testData.map(test => fisher.testFn(test.csv) == test.id).filter(x => x).length;
+
+          log('');
+          log(`Klassifikation ${fisher.trainings[0].id} und ${fisher.trainings[1].id}`);
+          log(`Klassifikationsgüte: ${correct/testData.length}`);
+          log(`Richtig: ${correct} von ${testData.length}`);
+          log(`Beispiel ${testData[0].id}: ${fisher.p(testData[0].csv, 0)} / ${fisher.p(testData[0].csv, 1)}`);
+          log(`Selbsttest (${fisher.trainings[0].id}): ${fisher.trainings[0].csv.map(test => fisher.testFn(test) == fisher.trainings[0].id).filter(x => x).length / fisher.trainings[0].csv.length}`);
+          log(`Selbsttest (${fisher.trainings[1].id}): ${fisher.trainings[1].csv.map(test => fisher.testFn(test) == fisher.trainings[1].id).filter(x => x).length / fisher.trainings[1].csv.length}`);
+        });
+      });
+    });
+
+    function getFischerU(group1, group2, u, meanDif, invCovarianceSumTimesMeanDif) {
+      u = u || new Array(group1.mean._data.length).fill(0.1).map(x => x);
+      meanDif = meanDif || math.subtract(group1.mean, group2.mean);
+      invCovarianceSumTimesMeanDif = invCovarianceSumTimesMeanDif || math.multiply(math.inv(math.add(group1.covariance, group2.covariance)), meanDif);
+      let s = math.divide(math.multiply(math.transpose(u), math.multiply(meanDif, math.multiply(math.transpose(meanDif),u))),
+                          math.add(math.multiply(math.transpose(u), math.multiply(group1.covariance, u)), math.multiply(math.transpose(u), math.multiply(group2.covariance, u))));
+      let nextU = math.multiply(math.divide(math.multiply(math.transpose(meanDif), u), s), invCovarianceSumTimesMeanDif);
+      let uDif = math.sum(math.dotPow(math.subtract(u, nextU),2));
+      return uDif < 0.00001? getFischerU(group1, group2, nextU, meanDif, invCovarianceSumTimesMeanDif): nextU;
+    }
+
+    function normieren(v) {
+      return math.multiply(1/math.sqrt(math.sum(math.dotPow(v,2))),v);
+    }
+
+    //helpers
+    function plot(target, verteilungen) {
+      functionPlot({
+        target: `#${target}`,
+        disableZoom: true,
+        xAxis: {
+          label: 'x',
+          domain: [-2.1, 1]
+        },
+        yAxis: {
+          label: `y`,
+          domain: [-0.1,11]
+        },
+        data: verteilungen.map(verteilung => { return {
+          scope: verteilung,
+          fn: '(1/sqrt(2*PI*(var)))*exp(-(x-mean)^2/(2*(var)))'
+        }})
+      });
+    }
+    function log(x) {
+      document.getElementById('log').innerText += x + '\n';
+    }
+    function readCsv(data, k, split) {
+      return data.split('\n').map(line => line.split(split ? split : ',').map(x => Number.parseFloat(x)).filter(x => !Number.isNaN(x))).filter(arr => arr.length >= k)
+    }
+</script>
+</body>
+</html>
