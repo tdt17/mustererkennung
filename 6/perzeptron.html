@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://d3js.org/d3.v3.min.js"></script>
+    <script src="https://maurizzzio.github.io/function-plot/js/function-plot.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
+    <style>
+        .inline { display: inline-block; position: relative; vertical-align: top; }
+        .inline > span { position: absolute; left: 40px; top: 30px; }
+        .left { float: left }
+    </style>
+</head>
+<body>
+<div id="log" class="left"></div>
+<div class="inline" id="graph0"><span>3 vs 5</span></div>
+<div class="inline" id="graph1"><span>3 vs 7</span></div>
+<div class="inline" id="graph2"><span>3 vs 8</span></div>
+<div class="inline" id="graph3"><span>5 vs 7</span></div>
+<div class="inline" id="graph4"><span>5 vs 8</span></div>
+<div class="inline" id="graph5"><span>7 vs 8</span></div>
+<script>
+  log('Ausgabe:');
+  let classes = [3, 5, 7, 8];
+  let training = [];
+  let gets = classes.map(x => jQuery.get(`train.${x}`));
+
+  log('Start');
+  jQuery.when( ...gets ).done((...responses) => {
+    training = responses.map((response, i) => {
+      let csv = readCsv(response[0], 256);
+      return {
+        id: classes[i],
+        csv: csv
+      }
+    });
+    console.log(training);
+
+    let a = b = 0,
+      trainingsSets = [];
+    for (a = 0; a < training.length; a++) {
+      for (b = a + 1; b < training.length; b++) {
+        trainingsSets.push([training[a], training[b]]);
+      }
+    }
+
+    let trainingBinaryLearner = trainingsSets.map((trainings, i) => {
+      console.log(`calc for (${trainings[0].id}, ${trainings[1].id})`);
+      let trainingsData = trainings.map((tr, i) => tr.csv.map(row => row.concat(i))).reduce((a,b) => a.concat(b), []);
+      let perzeptron = new Perzeptron(trainings[0].csv[0].length);
+      let errors = [];
+      for(let trainNr = 0; trainNr <= 3000; trainNr++) {
+        perzeptron.train(trainingsData[~~(Math.random()*trainingsData.length)]);
+        if(trainNr % 50 == 0) {
+          let error = trainingsData.reduce((sum, row) => sum + 0.5*math.pow(row[row.length-1] - perzeptron.predict(row.slice(0,-1)), 2), 0);
+          if(Number.isNaN(error)){
+            console.log(perzeptron, trainingsData, trainingsData.map((row) => 0.5*math.pow(row[row.length-1] - perzeptron.predict(row.slice(0,-1)), 2)))
+          }
+          errors.push([errors.length*50, error]);
+        }
+      }
+      plot(`graph${i}`, 'Quadratischer Error', errors);
+      return {
+        trainings: trainings,
+        testFn: (test) => perzeptron.predict(test) <= 0.5? trainings[0].id: trainings[1].id,
+        p: (test) => perzeptron.predict(test)
+      }
+    });
+
+    log('Berechne Klassifikationsgüten...');
+    jQuery.get('zip.test', (data) => {
+      let testing = readCsv(data, 257, ' ').map(row => {
+        return {
+          id: row[0],
+          csv: row.slice(1)
+        }
+      });
+
+      trainingBinaryLearner.forEach(learner => {
+        let testData = testing.filter(test => test.id == learner.trainings[0].id || test.id == learner.trainings[1].id),
+          correct = testData.map(test => learner.testFn(test.csv) == test.id).filter(x => x).length;
+
+        log('');
+        log(`Klassifikation ${learner.trainings[0].id} und ${learner.trainings[1].id}`);
+        log(`Klassifikationsgüte: ${correct/testData.length}`);
+        log(`Richtig: ${correct} von ${testData.length}`);
+        log(`Beispiel ${testData[0].id}: ${learner.p(testData[0].csv)}}`);
+        log(`Selbsttest (${learner.trainings[0].id}): ${learner.trainings[0].csv.map(test => learner.testFn(test) == learner.trainings[0].id).filter(x => x).length / learner.trainings[0].csv.length}`);
+        log(`Selbsttest (${learner.trainings[1].id}): ${learner.trainings[1].csv.map(test => learner.testFn(test) == learner.trainings[1].id).filter(x => x).length / learner.trainings[1].csv.length}`);
+      });
+    });
+  });
+
+  class Perzeptron {
+    constructor(k) {
+      this.b = new Array(k+1).fill(0);
+    }
+
+    train(train) {
+      let x = [1].concat(train.slice()),
+        y = x.pop();
+      this.b = math.add(this.b, math.multiply(x, math.subtract(y, this.predict(x.slice(1)) < 0.5? 0: 1)));
+    }
+
+    predict(test) {
+      let x = [1].concat(test.slice()),
+        exp = math.pow(math.e, math.sum(math.multiply(x, this.b)));
+      return Number.isFinite(exp)? exp/(1 + exp): 1;
+    }
+  }
+
+  //helpers
+  function plot(target, yLabel, graph) {
+    functionPlot({
+      target: `#${target}`,
+      //width: 1200,
+      //height: 500,
+      disableZoom: true,
+      xAxis: {
+        label: 'x - Iterationen',
+        domain: [0, graph[graph.length-1][0]]
+      },
+      yAxis: {
+        label: `y - ${yLabel}`,
+        domain: [0, graph[0][1]]
+      },
+      data: [{
+        points: graph,
+        fnType: 'points',
+        graphType: 'polyline'
+      }]
+    })
+  }
+  function log(x) {
+    document.getElementById('log').innerText += x + '\n';
+  }
+  function readCsv(data, k, split) {
+    return data.split('\n').map(line => line.split(split ? split : ',').map(x => Number.parseFloat(x)).filter(x => !Number.isNaN(x))).filter(arr => arr.length >= k)
+  }
+</script>
+</body>
+</html>
