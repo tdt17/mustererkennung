@@ -7,7 +7,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
     <style>
         .inline { display: inline-block; position: relative; vertical-align: top; }
-        .inline > span { position: absolute; left: 40px; top: 30px; }
+        .inline > span { position: absolute; left: 60px; top: 30px; }
         .left { float: left }
     </style>
 </head>
@@ -48,18 +48,21 @@
       console.log(`calc for (${trainings[0].id}, ${trainings[1].id})`);
       let trainingsData = trainings.map((tr, i) => tr.csv.map(row => row.concat(i))).reduce((a,b) => a.concat(b), []);
       let perzeptron = new Perzeptron(trainings[0].csv[0].length);
-      let errors = [];
-      for(let trainNr = 0; trainNr <= 3000; trainNr++) {
+      let errors = [],
+          absolteErrors = [];
+      for(let trainNr = 0; trainNr <= 10000; trainNr++) {
         perzeptron.train(trainingsData[~~(Math.random()*trainingsData.length)]);
         if(trainNr % 50 == 0) {
           let error = trainingsData.reduce((sum, row) => sum + 0.5*math.pow(row[row.length-1] - perzeptron.predict(row.slice(0,-1)), 2), 0);
-          if(Number.isNaN(error)){
-            console.log(perzeptron, trainingsData, trainingsData.map((row) => 0.5*math.pow(row[row.length-1] - perzeptron.predict(row.slice(0,-1)), 2)))
-          }
+          let errorAbsolute = trainingsData.reduce((sum, row) => math.abs(row[row.length-1] - perzeptron.predict(row.slice(0,-1)) < 0.5? sum: sum + 1), 0);
           errors.push([errors.length*50, error]);
+          absolteErrors.push([errors.length*50, errorAbsolute]);
+          if(errorAbsolute < 3 && error < 3) {
+            break;
+          }
         }
       }
-      plot(`graph${i}`, 'Quadratischer Error', errors);
+      plot(`graph${i}`, [0, errors[0][1]], 'Quadratischer Error / Absolute Error Count', [errors, absolteErrors]);
       return {
         trainings: trainings,
         testFn: (test) => perzeptron.predict(test) <= 0.5? trainings[0].id: trainings[1].id,
@@ -82,6 +85,7 @@
 
         log('');
         log(`Klassifikation ${learner.trainings[0].id} und ${learner.trainings[1].id}`);
+        log(`TrainingsAnzahl ${learner.trainings[0].csv.length} + ${learner.trainings[1].csv.length} = ${learner.trainings[0].csv.length + learner.trainings[1].csv.length}`);
         log(`Klassifikationsgüte: ${correct/testData.length}`);
         log(`Richtig: ${correct} von ${testData.length}`);
         log(`Beispiel ${testData[0].id}: ${learner.p(testData[0].csv)}}`);
@@ -110,7 +114,7 @@
   }
 
   //helpers
-  function plot(target, yLabel, graph) {
+  function plot(target, yDim, yLabel, graphs) {
     functionPlot({
       target: `#${target}`,
       //width: 1200,
@@ -118,17 +122,17 @@
       disableZoom: true,
       xAxis: {
         label: 'x - Iterationen',
-        domain: [0, graph[graph.length-1][0]]
+        domain: [0, graphs[0][graphs[0].length-1][0]]
       },
       yAxis: {
         label: `y - ${yLabel}`,
-        domain: [0, graph[0][1]]
+        domain: yDim
       },
-      data: [{
+      data: graphs.map(graph => { return {
         points: graph,
         fnType: 'points',
         graphType: 'polyline'
-      }]
+      }})
     })
   }
   function log(x) {
