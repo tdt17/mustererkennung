@@ -32,21 +32,19 @@
                   train(train) {
                     let x = [1].concat(train.slice()),
                         y = x.pop(),
-                        diff = y - this.y(x.slice(1));
+                        diff = y - this.y(x);
                     if(diff != 0) {
                       this.b = math.add(this.b, math.multiply(x, diff));
                     }
                   }
 
                   y(test) {
-                    let x = [1].concat(test.slice());
-                    return math.sum(math.multiply(x, this.b)) > 0? 1: 0;
+                    return math.sum(math.multiply(test, this.b)) < 0? 0: 1;
                   }
 
                   predict(test) {
-                    let x = [1].concat(test.slice()),
-                        exp = math.exp(math.sum(math.multiply(x, this.b)));
-                    return Number.isFinite(exp)? exp/(1 + exp): 1;
+                    let x = [1].concat(test.slice());
+                    return 1/(1 + math.exp(-math.sum(math.multiply(x, this.b))));
                   }
                 }
                 let perzeptron,
