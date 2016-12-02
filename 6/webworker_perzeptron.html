@@ -32,10 +32,15 @@
                   train(train) {
                     let x = [1].concat(train.slice()),
                         y = x.pop(),
-                        diff = y - (this.predict(x.slice(1)) < 0.5? 0: 1);
+                        diff = y - this.y(x.slice(1));
                     if(diff != 0) {
                       this.b = math.add(this.b, math.multiply(x, diff));
                     }
+                  }
+
+                  y(test) {
+                    let x = [1].concat(test.slice());
+                    return math.sum(math.multiply(x, this.b)) > 0? 1: 0;
                   }
 
                   predict(test) {
