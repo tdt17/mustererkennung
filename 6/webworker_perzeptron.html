@@ -31,13 +31,16 @@
 
                   train(train) {
                     let x = [1].concat(train.slice()),
-                        y = x.pop();
-                    this.b = math.add(this.b, math.multiply(x, math.subtract(y, this.predict(x.slice(1)) < 0.5? 0: 1)));
+                        y = x.pop(),
+                        diff = y - (this.predict(x.slice(1)) < 0.5? 0: 1);
+                    if(diff != 0) {
+                      this.b = math.add(this.b, math.multiply(x, diff));
+                    }
                   }
 
                   predict(test) {
                     let x = [1].concat(test.slice()),
-                        exp = math.pow(math.e, math.sum(math.multiply(x, this.b)));
+                        exp = math.exp(math.sum(math.multiply(x, this.b)));
                     return Number.isFinite(exp)? exp/(1 + exp): 1;
                   }
                 }
@@ -45,21 +48,24 @@
                     trainings,
                     testFn = (test) => perzeptron.predict(test) <= 0.5? trainings[0].id: trainings[1].id;
                 let queryableFunctions = {
-                  init: (trainingsSet, i, maxTrain) => {
+                  run: (trainingsSet, i, maxTrain) => {
                     trainings = trainingsSet;
                     console.log(`calc for (${trainings[0].id}, ${trainings[1].id})`);
                     let trainingsData = trainings.map((tr, i) => tr.csv.map(row => row.concat(i))).reduce((a,b) => a.concat(b), []);
                     perzeptron = new Perzeptron(trainings[0].csv[0].length);
                     let errors = [],
-                        absolteErrors = [];
+                        absolteErrors = [],
+                        last = -1,
+                        next = 0;
                     for(let trainNr = 0; trainNr <= maxTrain; trainNr++) {
                       perzeptron.train(trainingsData[~~(Math.random()*trainingsData.length)]);
-                      if(trainNr % 80 == 0) {
+                      if((next = trainNr / (200 + (trainNr/100))) - last >= 1) {
+                        last = next;
                         let error = trainingsData.reduce((sum, row) => sum + 0.5*math.pow(row[row.length-1] - perzeptron.predict(row.slice(0,-1)), 2), 0);
-                        let errorAbsolute = trainingsData.reduce((sum, row) => math.abs(row[row.length-1] - perzeptron.predict(row.slice(0,-1)) < 0.5? sum: sum + 1), 0);
-                        errors.push([errors.length*80, error]);
-                        absolteErrors.push([errors.length*80, errorAbsolute]);
-                        if(errorAbsolute < 2 && error < 2) {
+                        let errorAbsolute = trainingsData.reduce((sum, row) => math.abs(row[row.length-1] - perzeptron.predict(row.slice(0,-1))) < 0.5? sum: sum + 1, 0);
+                        errors.push([trainNr, error]);
+                        absolteErrors.push([trainNr, errorAbsolute]);
+                        if(errorAbsolute === 0 && error < 1) {
                           break;
                         }
                       }
@@ -75,9 +81,9 @@
                     postMessage({fn: 'log', args: [`TrainingsAnzahl ${trainings[0].csv.length} + ${trainings[1].csv.length} = ${trainings[0].csv.length + trainings[1].csv.length}`]});
                     postMessage({fn: 'log', args: [`Klassifikationsgüte: ${correct/testData.length}`]});
                     postMessage({fn: 'log', args: [`Richtig: ${correct} von ${testData.length}`]});
-                    postMessage({fn: 'log', args: [`Beispiel ${testData[0].id}: ${perzeptron.predict(testData[0].csv)}}`]});
-                    postMessage({fn: 'log', args: [`Selbsttest (${trainings[0].id}): ${trainings[0].csv.map(test => testFn(test) == trainings[0].id).filter(x => x).length / trainings[0].csv.length}`]});
-                    postMessage({fn: 'log', args: [`Selbsttest (${trainings[1].id}): ${trainings[1].csv.map(test => testFn(test) == trainings[1].id).filter(x => x).length / trainings[1].csv.length}`]});
+                    postMessage({fn: 'log', args: [`Beispiel für ${testData[0].id} (${trainings[0].id}=0;${trainings[1].id}=1): ${perzeptron.predict(testData[0].csv)}`]});
+                    postMessage({fn: 'log', args: [`Selbsttest (${trainings[0].id}): ${trainings[0].csv.map(test => testFn(test) == trainings[0].id).filter(x => x).length} / ${trainings[0].csv.length}`]});
+                    postMessage({fn: 'log', args: [`Selbsttest (${trainings[1].id}): ${trainings[1].csv.map(test => testFn(test) == trainings[1].id).filter(x => x).length} / ${trainings[1].csv.length}`]});
                   },
                   testFn: testFn,
                   p: (test) => perzeptron.predict(test)
@@ -140,9 +146,10 @@
             }
           }
         };
-        worker.postMessage({fn: 'init', args: [trainingsSet, i, 50000]});
+        worker.postMessage({fn: 'run', args: [trainingsSet, i, 100000]});
         return worker;
       });
+      log('Worker erstellt');
     });
 
     function plot(target, yDim, yLabel, graphs) {

@@ -54,10 +54,10 @@
         perzeptron.train(trainingsData[~~(Math.random()*trainingsData.length)]);
         if(trainNr % 50 == 0) {
           let error = trainingsData.reduce((sum, row) => sum + 0.5*math.pow(row[row.length-1] - perzeptron.predict(row.slice(0,-1)), 2), 0);
-          let errorAbsolute = trainingsData.reduce((sum, row) => math.abs(row[row.length-1] - perzeptron.predict(row.slice(0,-1)) < 0.5? sum: sum + 1), 0);
-          errors.push([errors.length*50, error]);
-          absolteErrors.push([errors.length*50, errorAbsolute]);
-          if(errorAbsolute < 3 && error < 3) {
+          let errorAbsolute = trainingsData.reduce((sum, row) => math.abs(row[row.length-1] - perzeptron.predict(row.slice(0,-1))) < 0.5? sum: sum + 1, 0);
+          errors.push([trainNr, error]);
+          absolteErrors.push([trainNr, errorAbsolute]);
+          if(errorAbsolute === 0 && error < 3) {
             break;
           }
         }
@@ -102,13 +102,16 @@
 
     train(train) {
       let x = [1].concat(train.slice()),
-        y = x.pop();
-      this.b = math.add(this.b, math.multiply(x, math.subtract(y, this.predict(x.slice(1)) < 0.5? 0: 1)));
+        y = x.pop(),
+        diff = y - (this.predict(x.slice(1)) < 0.5? 0: 1);
+      if(diff != 0) {
+        this.b = math.add(this.b, math.multiply(x, diff));
+      }
     }
 
     predict(test) {
       let x = [1].concat(test.slice()),
-        exp = math.pow(math.e, math.sum(math.multiply(x, this.b)));
+        exp = math.exp(math.sum(math.multiply(x, this.b)));
       return Number.isFinite(exp)? exp/(1 + exp): 1;
     }
   }
