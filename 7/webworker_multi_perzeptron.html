@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://d3js.org/d3.v3.min.js"></script>
+    <script src="https://maurizzzio.github.io/function-plot/js/function-plot.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
+    <style>
+        .inline { display: inline-block; position: relative; vertical-align: top; min-width: 550px; min-height: 350px}
+        .inline > span { position: absolute; left: 60px; top: 30px; }
+        .left { float: left }
+    </style>
+</head>
+<body>
+<div id="log" class="left"></div>
+<div class="inline" id="graph0"><span>3 vs 5</span></div>
+<div class="inline" id="graph1"><span>3 vs 7</span></div>
+<div class="inline" id="graph2"><span>3 vs 8</span></div>
+<div class="inline" id="graph3"><span>5 vs 7</span></div>
+<div class="inline" id="graph4"><span>5 vs 8</span></div>
+<div class="inline" id="graph5"><span>7 vs 8</span></div>
+<script>
+    // Build a worker from an anonymous function body
+    let blobURL = URL.createObjectURL( new Blob([ '(',
+            (() => {
+                importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js');
+                class Perzeptron {
+                  constructor(k) {
+                    this.b = new Array(k+1).fill(0);
+                  }
+
+                  train(train) {
+                    let x = [1].concat(train.slice()),
+                        y = x.pop(),
+                        diff = y - this.y(x);
+                    if(diff != 0) {
+                      this.b = math.add(this.b, math.multiply(x, diff));
+                    }
+                  }
+
+                  y(test) {
+                    return math.sum(math.multiply(test, this.b)) < 0? 0: 1;
+                  }
+
+                  predict(test) {
+                    let x = [1].concat(test.slice());
+                    return 1/(1 + math.exp(-math.sum(math.multiply(x, this.b))));
+                  }
+                }
+                let perzeptron,
+                    trainings,
+                    testFn = (test) => perzeptron.predict(test) <= 0.5? trainings[0].id: trainings[1].id;
+                let queryableFunctions = {
+                  run: (trainingsSet, i, maxTrain) => {
+                    trainings = trainingsSet;
+                    console.log(`calc for (${trainings[0].id}, ${trainings[1].id})`);
+                    let trainingsData = trainings.map((tr, i) => tr.csv.map(row => row.concat(i))).reduce((a,b) => a.concat(b), []);
+                    perzeptron = new Perzeptron(trainings[0].csv[0].length);
+                    let errors = [],
+                        absolteErrors = [],
+                        last = -1,
+                        next = 0;
+                    for(let trainNr = 0; trainNr <= maxTrain; trainNr++) {
+                      perzeptron.train(trainingsData[~~(Math.random()*trainingsData.length)]);
+                      if((next = trainNr / (200 + (trainNr/100))) - last >= 1) {
+                        last = next;
+                        let error = trainingsData.reduce((sum, row) => sum + 0.5*math.pow(row[row.length-1] - perzeptron.predict(row.slice(0,-1)), 2), 0);
+                        let errorAbsolute = trainingsData.reduce((sum, row) => math.abs(row[row.length-1] - perzeptron.predict(row.slice(0,-1))) < 0.5? sum: sum + 1, 0);
+                        errors.push([trainNr, error]);
+                        absolteErrors.push([trainNr, errorAbsolute]);
+                        if(errorAbsolute === 0 && error < 1) {
+                          break;
+                        }
+                      }
+                    }
+                    postMessage({fn: 'plot', args: [`graph${i}`, [0, errors[0][1]], 'Quadratischer Error / Absolute Error Count', [errors, absolteErrors]]});
+                  },
+                  testing: (testing) => {
+                    let testData = testing.filter(test => test.id == trainings[0].id || test.id == trainings[1].id),
+                        correct = testData.map(test => testFn(test.csv) == test.id).filter(x => x).length;
+
+                    postMessage({fn: 'log', args: ['']});
+                    postMessage({fn: 'log', args: [`Klassifikation ${trainings[0].id} und ${trainings[1].id}`]});
+                    postMessage({fn: 'log', args: [`TrainingsAnzahl ${trainings[0].csv.length} + ${trainings[1].csv.length} = ${trainings[0].csv.length + trainings[1].csv.length}`]});
+                    postMessage({fn: 'log', args: [`Klassifikationsgüte: ${correct/testData.length}`]});
+                    postMessage({fn: 'log', args: [`Richtig: ${correct} von ${testData.length}`]});
+                    postMessage({fn: 'log', args: [`Beispiel für ${testData[0].id} (${trainings[0].id}=0;${trainings[1].id}=1): ${perzeptron.predict(testData[0].csv)}`]});
+                    postMessage({fn: 'log', args: [`Selbsttest (${trainings[0].id}): ${trainings[0].csv.map(test => testFn(test) == trainings[0].id).filter(x => x).length} / ${trainings[0].csv.length}`]});
+                    postMessage({fn: 'log', args: [`Selbsttest (${trainings[1].id}): ${trainings[1].csv.map(test => testFn(test) == trainings[1].id).filter(x => x).length} / ${trainings[1].csv.length}`]});
+                  },
+                  testFn: testFn,
+                  p: (test) => perzeptron.predict(test)
+                };
+                onmessage = (e) => {
+                  console.log('worker', e);
+                  if(e.data instanceof Object && e.data.hasOwnProperty('fn') && e.data.hasOwnProperty('args')) {
+                    queryableFunctions[e.data.fn].apply(self, e.data.args);
+                  }
+                }
+            }).toString(),
+            ')()' ], { type: 'application/javascript' } ) );
+
+    // Won't be needing this anymore
+    //URL.revokeObjectURL( blobURL );
+
+    log('Ausgabe:');
+    let classes = [3, 5, 7, 8];
+    let training = [],
+        testing = [];
+    let gets = classes.map(x => jQuery.get(`train.${x}`));
+
+    jQuery.get('zip.test', (data) => {
+      testing = readCsv(data, 257, ' ').map(row => {
+        return {
+          id: row[0],
+          csv: row.slice(1)
+        }
+      });
+    });
+
+    log('Start');
+    let trainingBinaryLearner;
+    jQuery.when( ...gets ).done((...responses) => {
+      training = responses.map((response, i) => {
+        let csv = readCsv(response[0], 256);
+        return {
+          id: classes[i],
+          csv: csv
+        }
+      });
+      console.log(training);
+
+      let a = b = 0,
+        trainingsSets = [];
+      for (a = 0; a < training.length; a++) {
+        for (b = a + 1; b < training.length; b++) {
+          trainingsSets.push([training[a], training[b]]);
+        }
+      }
+
+      trainingBinaryLearner = trainingsSets.map((trainingsSet, i) => {
+        let worker = new Worker( blobURL );
+        worker.onmessage = function(e) {
+          console.log(e);
+          if(e.data instanceof Object && e.data.hasOwnProperty('fn') && e.data.hasOwnProperty('args')) {
+            window[e.data.fn].apply(self, e.data.args);
+            if(e.data.fn === 'plot') {
+              worker.postMessage({fn: 'testing', args: [testing]});
+            }
+          }
+        };
+        worker.postMessage({fn: 'run', args: [trainingsSet, i, 100000]});
+        return worker;
+      });
+      log('Worker erstellt');
+    });
+
+    function plot(target, yDim, yLabel, graphs) {
+      functionPlot({
+        target: `#${target}`,
+        //width: 1200,
+        //height: 500,
+        disableZoom: true,
+        xAxis: {
+          label: 'x - Iterationen',
+          domain: [0, graphs[0][graphs[0].length-1][0]]
+        },
+        yAxis: {
+          label: `y - ${yLabel}`,
+          domain: yDim
+        },
+        data: graphs.map(graph => { return {
+          points: graph,
+          fnType: 'points',
+          graphType: 'polyline'
+        }})
+      })
+    }
+    function log(x) {
+      document.getElementById('log').innerText += x + '\n';
+    }
+    function readCsv(data, k, split) {
+      return data.split('\n').map(line => line.split(split ? split : ',').map(x => Number.parseFloat(x)).filter(x => !Number.isNaN(x))).filter(arr => arr.length >= k)
+    }
+</script>
+</body>
+</html>
