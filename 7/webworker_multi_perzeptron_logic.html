@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://d3js.org/d3.v3.min.js"></script>
+    <script src="https://maurizzzio.github.io/function-plot/js/function-plot.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
+    <style>
+        .inline { display: inline-block; position: relative; vertical-align: top; min-width: 550px; min-height: 350px}
+        .inline > span { position: absolute; left: 60px; top: 30px; }
+        .left { float: left; padding: 0 10px}
+    </style>
+</head>
+<body>
+<div>
+    <div class="left">
+        HiddenLayer: <input id="hiddenLayer" value="[2]" size="10"><br>
+        Alpha: <input id="alpha" value="1" size="10"><br>
+        MaxIterations: <input id="maxIterations" value="5000" size="10"><br>
+        BatchSize: <input id="batchSize" value="1" size="10"><br>
+        <button onclick="run()">run</button>
+    </div>
+    <div id="log"></div>
+    <div style="clear: both;"></div>
+</div>
+<div class="inline" id="graph0"><span>AND</span></div>
+<div class="inline" id="graph1"><span>OR</span></div>
+<div class="inline" id="graph2"><span>XOR</span></div>
+<div class="inline" id="graph3"><span>2D Out: [XOR, NAND]</span></div>
+<script>
+  // Build a worker from an anonymous function body
+  let blobURL = URL.createObjectURL( new Blob([ '(',
+    (() => {
+      importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js');
+      class MultiPerzeptron {
+        constructor(k, layer, alpha) {
+          this.alpha = alpha || 1;
+          this.perzeptrons = layer.map((ki, i, layer) => new Array(ki).fill(0).map(_ => new Perzeptron(i === 0? k: layer[i-1])));
+        }
+
+        predict(test) {
+          return this.perzeptrons.reduce((interimResults, layer) => layer.map(p => p.forward(interimResults)), test);
+        }
+
+        train(trains) {
+          let wDeltas = this.perzeptrons.map(layer => layer.map(p => new Array(p.w.length).fill(0))), y, errors;
+          let trainI;
+          for(trainI = 0; trainI < trains.length; trainI++) {
+            y = this.perzeptrons.reduce((interimResults, layer) => layer.map(p => p.forward(interimResults)), trains[trainI].x);
+            errors = math.subtract(y, trains[trainI].y);
+            this.perzeptrons.reduceRight((e, layer, li) => {
+              let deltas = layer.map((p, i) => p.backward(e[i])),
+                  w = layer.map((p, i) => p.w);
+              wDeltas[li] = math.add(wDeltas[li], layer.map((p, i) => math.multiply(deltas[i], p.o)));
+              return math.multiply(deltas,w);
+            }, errors);
+          }
+          this.perzeptrons.forEach(((layer, li) => layer.forEach((p, pi) => p.w =  math.add(p.w, math.multiply(-this.alpha, wDeltas[li][pi])))));
+        }
+      }
+      class Perzeptron {
+        constructor(k) {
+          this.w = new Array(k+1).fill(0).map(x => math.random());
+          this.o = 0;
+          this.derivation = 0;
+        }
+
+        forward(test) {
+          this.o = test.concat(1);
+          let p = 1/(1 + math.exp(-math.sum(math.multiply(this.o, this.w))));
+          this.derivation = p * (1 - p);
+          return p;
+        }
+
+        backward(delta) {
+          return this.derivation * delta;
+        }
+
+        predict(test) {
+          let x = test.concat(1);
+          return 1/(1 + math.exp(-math.sum(math.multiply(x, this.w))));
+        }
+      }
+      let multiPerzeptron,
+          perzeptron,
+          trainings,
+          testFn = (test) => perzeptron.predict(test) <= 0.5? trainings[0].id: trainings[1].id;
+      let queryableFunctions = {
+        run: (trainingsSet, layer, alpha, graphI, maxTrain, batchSize) => {
+          trainings = trainingsSet;
+          multiPerzeptron = new MultiPerzeptron(trainings[0].x.length, layer, alpha);
+          console.log(multiPerzeptron);
+          let errorGraphs = trainings[0].y.map(_ => []),
+              last = -1,
+              next = 0;
+          for(let trainNr = 0; trainNr <= maxTrain; trainNr++) {
+            multiPerzeptron.train(new Array(batchSize).fill(0).map(_ => trainings[~~(trainings.length * math.random())]));
+            if((next = trainNr / (10 + (trainNr/1000))) - last >= 1) {
+              last = next;
+              let trainResults = trainings.map(train => multiPerzeptron.predict(train.x));
+              let errorResults = errorGraphs.map((_, yi) => trainings.reduce((sum, train, ti) => sum + 0.5*math.pow(train.y[yi] - trainResults[ti][yi], 2), 0));
+              errorGraphs.forEach((yError, yi) => {
+                yError.push([trainNr, errorResults[yi]]);
+              });
+              let maxError = math.max(errorResults);
+              if(maxError < 0.01) {
+                break;
+              }
+            }
+          }
+          postMessage({fn: 'plot', args: [`graph${graphI}`, [0, math.max(errorGraphs[0].map(x => x[1]))], 'Quadratischer Error', errorGraphs]});
+        },
+        testing: (testing) => {
+          let testData = testing.filter(test => test.id == trainings[0].id || test.id == trainings[1].id),
+            correct = testData.map(test => testFn(test.csv) == test.id).filter(x => x).length;
+
+          postMessage({fn: 'log', args: ['']});
+          postMessage({fn: 'log', args: [`Klassifikation ${trainings[0].id} und ${trainings[1].id}`]});
+          postMessage({fn: 'log', args: [`TrainingsAnzahl ${trainings[0].csv.length} + ${trainings[1].csv.length} = ${trainings[0].csv.length + trainings[1].csv.length}`]});
+          postMessage({fn: 'log', args: [`Klassifikationsgüte: ${correct/testData.length}`]});
+          postMessage({fn: 'log', args: [`Richtig: ${correct} von ${testData.length}`]});
+          postMessage({fn: 'log', args: [`Beispiel für ${testData[0].id} (${trainings[0].id}=0;${trainings[1].id}=1): ${perzeptron.predict(testData[0].csv)}`]});
+          postMessage({fn: 'log', args: [`Selbsttest (${trainings[0].id}): ${trainings[0].csv.map(test => testFn(test) == trainings[0].id).filter(x => x).length} / ${trainings[0].csv.length}`]});
+          postMessage({fn: 'log', args: [`Selbsttest (${trainings[1].id}): ${trainings[1].csv.map(test => testFn(test) == trainings[1].id).filter(x => x).length} / ${trainings[1].csv.length}`]});
+        },
+        testFn: testFn,
+        p: (test) => perzeptron.predict(test)
+      };
+      onmessage = (e) => {
+        console.log('worker', e);
+        if(e.data instanceof Object && e.data.hasOwnProperty('fn') && e.data.hasOwnProperty('args')) {
+          queryableFunctions[e.data.fn].apply(self, e.data.args);
+        }
+      }
+    }).toString(),
+    ')()' ], { type: 'application/javascript' } ) );
+
+  // Won't be needing this anymore
+  //URL.revokeObjectURL( blobURL );
+
+  let trainings =   [[  {x: [0,0], y: [0]},
+                        {x: [0,1], y: [0]},
+                        {x: [1,0], y: [0]},
+                        {x: [1,1], y: [1]}],
+                    [   {x: [0,0], y: [0]},
+                        {x: [0,1], y: [1]},
+                        {x: [1,0], y: [1]},
+                        {x: [1,1], y: [1]}],
+                    [   {x: [0,0], y: [0]},
+                        {x: [0,1], y: [1]},
+                        {x: [1,0], y: [1]},
+                        {x: [1,1], y: [0]}],
+                    [   {x: [0,0], y: [0,1]},
+                        {x: [0,1], y: [1,0]},
+                        {x: [1,0], y: [1,0]},
+                        {x: [1,1], y: [0,0]}]
+                    ];
+
+  function run() {
+    log(null);
+    log('Ausgabe:');
+    let hiddenLayer = JSON.parse(document.getElementById('hiddenLayer').value),
+        alpha = JSON.parse(document.getElementById('alpha').value),
+        maxIterations = JSON.parse(document.getElementById('maxIterations').value),
+        batchSize = JSON.parse(document.getElementById('batchSize').value);
+
+    log(`Start (HiddenLayer: ${JSON.stringify(hiddenLayer)}, Alpha: ${alpha}, BatchSize: ${batchSize}, MaxI: ${maxIterations})`);
+    let learner = trainings.map((trainingsSet, i) => {
+      let worker = new Worker( blobURL );
+      worker.onmessage = function(e) {
+        console.log(e);
+        if(e.data instanceof Object && e.data.hasOwnProperty('fn') && e.data.hasOwnProperty('args')) {
+          window[e.data.fn].apply(self, e.data.args);
+            /*if(e.data.fn === 'plot') {
+             worker.postMessage({fn: 'testing', args: [testing]});
+             }*/
+        }
+      };
+      worker.postMessage({fn: 'run', args: [trainingsSet,hiddenLayer.concat(trainingsSet[0].y.length), alpha, i, maxIterations, batchSize]});
+      return worker;
+    });
+    log('Worker erstellt');
+  }
+
+  function plot(target, yDim, yLabel, graphs) {
+    functionPlot({
+      target: `#${target}`,
+      //width: 1200,
+      //height: 500,
+      disableZoom: true,
+      xAxis: {
+        label: 'x - Iterationen',
+        domain: [0, graphs[0][graphs[0].length-1][0]]
+      },
+      yAxis: {
+        label: `y - ${yLabel}`,
+        domain: yDim
+      },
+      data: graphs.map(graph => { return {
+        points: graph,
+        fnType: 'points',
+        graphType: 'polyline'
+      }})
+    })
+  }
+  function log(x) {
+    if(x === null) {
+      document.getElementById('log').innerText = '';
+    }else{
+      document.getElementById('log').innerText += x + '\n';
+    }
+  }
+</script>
+</body>
+</html>
