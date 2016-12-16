@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://code.jquery.com/jquery-3.1.1.min.js"></script>
+    <script src="https://d3js.org/d3.v3.min.js"></script>
+    <script src="https://maurizzzio.github.io/function-plot/js/function-plot.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js"></script>
+    <style>
+        .inline { display: inline-block; position: relative; vertical-align: top; min-width: 550px; min-height: 350px}
+        .inline > span { position: absolute; left: 60px; top: 30px; }
+        td { padding: 7px; min-width: 30px; }
+        .left { float: left; padding: 0 10px}
+    </style>
+</head>
+<body>
+<div>
+    <div class="left">
+        HiddenLayer: <input id="hiddenLayer" value="[]" size="10"><br>
+        Alpha: <input id="alpha" value="1" size="10"><br>
+        MaxIterations: <input id="maxIterations" value="500" size="10"><br>
+        BatchSize: <input id="batchSize" value="50" size="10"><br>
+        <button onclick="run()">run</button>
+        <button onclick="test()">test</button>
+    </div>
+    <div id="log"></div>
+    <div style="clear: both;"></div>
+</div>
+<div class="inline" id="graph0"><span>Numbers</span></div>
+<div class="inline" id="km0"></div>
+<script>
+  [10].forEach((k, i) => document.getElementById(`km${i}`).insertAdjacentHTML('beforeend', `<table>${new Array(k+1).fill(0).map((_,y) => `<tr>${new Array(k+1).fill(0).map((_,x) => `<td id="km${i}_${x-1}_${y-1}">${x==0?y-1:(y==0?x-1:'')}</td>`).join('')}</tr>`).join('')}</table>`));
+  // Build a worker from an anonymous function body
+  let blobURL = URL.createObjectURL( new Blob([ '(',
+    (() => {
+      importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/3.7.0/math.min.js');
+      class MultiPerzeptron {
+        constructor(k, layer, alpha) {
+          this.alpha = alpha || 1;
+          this.perzeptrons = layer.map((ki, i, layer) => new Array(ki).fill(0).map(_ => new Perzeptron(i === 0? k: layer[i-1])));
+        }
+
+        predict(test) {
+          return this.perzeptrons.reduce((interimResults, layer) => layer.map(p => p.forward(interimResults)), test);
+        }
+
+        train(trains) {
+          let wDeltas = this.perzeptrons.map(layer => layer.map(p => new Array(p.w.length).fill(0))), y, errors;
+          let trainI;
+          for(trainI = 0; trainI < trains.length; trainI++) {
+            y = this.perzeptrons.reduce((interimResults, layer) => layer.map(p => p.forward(interimResults)), trains[trainI].x);
+            errors = math.subtract(y, trains[trainI].y);
+            this.perzeptrons.reduceRight((e, layer, li) => {
+              let deltas = layer.map((p, i) => e[i] * p.backward()),
+                  w = layer.map((p, i) => p.w),
+                  o = layer.map((p, i) => p.o);
+              wDeltas[li] = math.add(wDeltas[li], math.multiply(math.diag(deltas), o));
+              return math.multiply(deltas, w);
+            }, errors);
+          }
+          this.perzeptrons.forEach(((layer, li) => layer.forEach((p, pi) => p.w =  math.add(p.w, math.multiply(-this.alpha, wDeltas[li][pi])))));
+        }
+      }
+      class Perzeptron {
+        constructor(k) {
+          this.w = new Array(k+1).fill(0).map(x => 0.1*math.random());
+          this.o = 0;
+          this.derivation = 0;
+        }
+
+        forward(test) {
+          this.o = test.concat(1);
+          let p = 1/(1 + math.exp(-math.sum(math.multiply(this.o, this.w))));
+          this.derivation = p * (1 - p);
+          return p;
+        }
+
+        backward() {
+          return this.derivation;
+        }
+
+        predict(test) {
+          let x = test.concat(1);
+          return 1/(1 + math.exp(-math.sum(math.multiply(x, this.w))));
+        }
+      }
+      let multiPerzeptron,
+          perzeptron,
+          trainings,
+          testFn = (test) => perzeptron.predict(test) <= 0.5? trainings[0].id: trainings[1].id;
+      let queryableFunctions = {
+        run: (trainingsSet, layer, alpha, graphI, maxTrain, batchSize) => {
+          trainings = trainingsSet;
+          multiPerzeptron = new MultiPerzeptron(trainings[0].x.length, layer, alpha);
+          console.log(multiPerzeptron);
+          let errorGraphs = trainings[0].y.map(_ => []),
+              last = -1,
+              next = 0,
+              paintI = 1,
+              time = new Date();
+          for(let trainNr = 0; trainNr <= maxTrain; trainNr++) {
+            multiPerzeptron.train(new Array(batchSize).fill(0).map(_ => trainings[~~(trainings.length * math.random())]));
+            console.log(`train: ${~~(((new Date() - time)/10))/100}s`); time = new Date();
+            if((next = trainNr / (40 + (trainNr/1000))) - last >= 1) {
+              last = next;
+              let trainResults = trainings.map(train => multiPerzeptron.predict(train.x));
+              let errorResults = errorGraphs.map((_, yi) => 0.5*trainings.reduce((sum, train, ti) => sum + math.pow(train.y[yi] - trainResults[ti][yi], 2), 0));
+              errorGraphs.forEach((yError, yi) => {
+                yError.push([trainNr, errorResults[yi]]);
+              });
+              let maxError = math.max(errorResults);
+              if(maxError < 0.01) {
+                break;
+              }
+              if(paintI++ % 2 === 0) {
+                postMessage({fn: 'plot', args: [`graph${graphI}`, [0, 600], 'Quadratischer Error', errorGraphs]});
+              }
+              console.log(`error: ${~~((new Date() - time)/10)/100}s`); time = new Date();
+            }
+          }
+          postMessage({fn: 'plot', args: [`graph${graphI}`, [0, 600], 'Quadratischer Error', errorGraphs]});
+        },
+        testing: (testing) => {
+          testing.forEach(test => Object.assign(test, {idResult: multiPerzeptron.predict(test.x).reduce((iMax, x, i, arr) => x > arr[iMax] ? i : iMax, 0)}));
+          let konfusionsmatrix = new Array(10).fill(0).map((_,xi) => {
+            let istY =  testing.filter(test => test.id === xi);
+            return new Array(10).fill(0).map((_,yi) =>
+              istY.filter(test => test.idResult === yi).length
+            )
+          });
+          postMessage({fn: 'paintKm', args: [konfusionsmatrix]});
+        },
+        testFn: testFn,
+        p: (test) => perzeptron.predict(test)
+      };
+      onmessage = (e) => {
+        console.log('worker', e);
+        if(e.data instanceof Object && e.data.hasOwnProperty('fn') && e.data.hasOwnProperty('args')) {
+          queryableFunctions[e.data.fn].apply(self, e.data.args);
+        }
+      }
+    }).toString(),
+    ')()' ], { type: 'application/javascript' } ) );
+
+  // Won't be needing this anymore
+  //URL.revokeObjectURL( blobURL );
+
+  let trainings =   [];
+  log('Lade Daten...');
+  jQuery.get('zip.train', (data) => {
+    let ys = new Array(10).fill(0).map((_, i) => new Array(10).fill(0).map((_, yi) => i === yi? 1: 0 ));
+    trainings = [readCsv(data, 257, ' ').map(row => ({
+      id: row[0],
+      y: ys[row[0]],
+      x: row.slice(1)
+    }))];
+    log('Daten geladen');
+  });
+
+  let learner = [];
+  function run() {
+    log(null);
+    log('Ausgabe:');
+    let hiddenLayer = JSON.parse(document.getElementById('hiddenLayer').value),
+        alpha = JSON.parse(document.getElementById('alpha').value),
+        maxIterations = JSON.parse(document.getElementById('maxIterations').value),
+        batchSize = JSON.parse(document.getElementById('batchSize').value);
+
+    log(`Start (HiddenLayer: ${JSON.stringify(hiddenLayer)}, Alpha: ${alpha}, BatchSize: ${batchSize}, MaxI: ${maxIterations})`);
+    learner = trainings.map((trainingsSet, i) => {
+      let worker = new Worker( blobURL );
+      worker.onmessage = function(e) {
+        console.log(e);
+        if(e.data instanceof Object && e.data.hasOwnProperty('fn') && e.data.hasOwnProperty('args')) {
+          window[e.data.fn].apply(self, e.data.args);
+            /*if(e.data.fn === 'plot') {
+             worker.postMessage({fn: 'testing', args: [testing]});
+             }*/
+        }
+      };
+      worker.postMessage({fn: 'run', args: [trainingsSet,hiddenLayer.concat(trainingsSet[0].y.length), alpha, i, maxIterations, batchSize]});
+      return worker;
+    });
+    log('Worker erstellt');
+  }
+
+  function test() {
+    jQuery.get('zip.test', (data) => {
+      let ys = new Array(10).fill(0).map((_, i) => new Array(10).fill(0).map((_, yi) => i === yi? 1: 0 ));
+      let testing = readCsv(data, 257, ' ').map(row => {
+        return {
+          id: row[0],
+          y: ys[row[0]],
+          x: row.slice(1)
+        };
+      });
+      learner.forEach(worker => worker.postMessage({fn: 'testing', args: [testing]}));
+    });
+  }
+
+  function plot(target, yDim, yLabel, graphs) {
+    functionPlot({
+      target: `#${target}`,
+      width: 1200,
+      height: 500,
+      disableZoom: true,
+      xAxis: {
+        label: 'x - Iterationen',
+        domain: [0, graphs[0][graphs[0].length-1][0]]
+      },
+      yAxis: {
+        label: `y - ${yLabel}`,
+        domain: yDim
+      },
+      data: graphs.map(graph => { return {
+        points: graph,
+        fnType: 'points',
+        graphType: 'polyline'
+      }})
+    })
+  }
+  function log(x) {
+    if(x === null) {
+      document.getElementById('log').innerText = '';
+    }else{
+      document.getElementById('log').innerText += x + '\n';
+    }
+  }
+  function paintKm(matrix) {
+    matrix.forEach((row, xi) => row.forEach((val, yi) => document.getElementById(`km0_${xi}_${yi}`).innerText = val));
+  }
+  function readCsv(data, k, split) {
+    return data.split('\n').map(line => line.split(split ? split : ',').map(x => Number.parseFloat(x)).filter(x => !Number.isNaN(x))).filter(arr => arr.length >= k)
+  }
+</script>
+</body>
+</html>
